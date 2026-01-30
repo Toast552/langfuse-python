@@ -20,6 +20,7 @@ from typing import (
     Protocol,
     Tuple,
     Union,
+    cast,
 )
 
 from langfuse.api.resources.commons.types import (
@@ -846,6 +847,7 @@ class BatchEvaluationRunner:
         evaluators: List[EvaluatorFunction],
         filter: Optional[str] = None,
         fetch_batch_size: int = 50,
+        fetch_trace_fields: Optional[str] = None,
         max_items: Optional[int] = None,
         max_concurrency: int = 50,
         composite_evaluator: Optional[CompositeEvaluatorFunction] = None,
@@ -866,6 +868,7 @@ class BatchEvaluationRunner:
             evaluators: List of evaluation functions to run on each item.
             filter: JSON filter string for querying items.
             fetch_batch_size: Number of items to fetch per API call.
+            fetch_trace_fields: Comma-separated list of fields to include when fetching traces. Available field groups: 'core' (always included), 'io' (input, output, metadata), 'scores', 'observations', 'metrics'. If not specified, all fields are returned. Example: 'core,scores,metrics'. Note: Excluded 'observations' or 'scores' fields return empty arrays; excluded 'metrics' returns -1 for 'totalCost' and 'latency'. Only relevant if scope is 'traces'.
             max_items: Maximum number of items to process (None = all).
             max_concurrency: Maximum number of concurrent evaluations.
             composite_evaluator: Optional function to create composite scores.
@@ -912,6 +915,8 @@ class BatchEvaluationRunner:
 
         if verbose:
             self._log.info(f"Starting batch evaluation on {scope}")
+            if scope == "traces" and fetch_trace_fields:
+                self._log.info(f"Fetching trace fields: {fetch_trace_fields}")
             if resume_from:
                 self._log.info(
                     f"Resuming from {resume_from.last_processed_timestamp} "
@@ -935,6 +940,7 @@ class BatchEvaluationRunner:
                     page=page,
                     limit=fetch_batch_size,
                     max_retries=max_retries,
+                    fields=fetch_trace_fields,
                 )
             except Exception as e:
                 # Failed after max_retries - create resume token and return
@@ -1114,6 +1120,7 @@ class BatchEvaluationRunner:
         page: int,
         limit: int,
         max_retries: int,
+        fields: Optional[str],
     ) -> List[Union[TraceWithFullDetails, ObservationsView]]:
         """Fetch a batch of items with retry logic.
 
@@ -1124,6 +1131,7 @@ class BatchEvaluationRunner:
             limit: Number of items per page.
             max_retries: Maximum number of retry attempts.
             verbose: Whether to log retry attempts.
+            fields: Trace fields to fetch
 
         Returns:
             List of items from the API.
@@ -1137,6 +1145,7 @@ class BatchEvaluationRunner:
                 limit=limit,
                 filter=filter,
                 request_options={"max_retries": max_retries},
+                fields=fields,
             )  # type: ignore
             return list(response.data)  # type: ignore
         elif scope == "observations":
@@ -1220,6 +1229,9 @@ class BatchEvaluationRunner:
             self._create_score_for_scope(
                 scope=scope,
                 item_id=item_id,
+                trace_id=cast(ObservationsView, item).trace_id
+                if scope == "observations"
+                else None,
                 evaluation=evaluation,
                 additional_metadata=metadata,
             )
@@ -1242,6 +1254,9 @@ class BatchEvaluationRunner:
                     self._create_score_for_scope(
                         scope=scope,
                         item_id=item_id,
+                        trace_id=cast(ObservationsView, item).trace_id
+                        if scope == "observations"
+                        else None,
                         evaluation=composite_eval,
                         additional_metadata=metadata,
                     )
@@ -1361,8 +1376,10 @@ class BatchEvaluationRunner:
 
     def _create_score_for_scope(
         self,
+        *,
         scope: str,
         item_id: str,
+        trace_id: Optional[str] = None,
         evaluation: Evaluation,
         additional_metadata: Optional[Dict[str, Any]],
     ) -> None:
@@ -1371,6 +1388,7 @@ class BatchEvaluationRunner:
         Args:
             scope: The type of entity ("traces", "observations").
             item_id: The ID of the entity.
+            trace_id: The trace ID of the entity; required if scope=observations
             evaluation: The evaluation result to create a score from.
             additional_metadata: Additional metadata to merge with evaluation metadata.
         """
@@ -1393,6 +1411,7 @@ class BatchEvaluationRunner:
         elif scope == "observations":
             self.client.create_score(
                 observation_id=item_id,
+                trace_id=trace_id,
                 name=evaluation.name,
                 value=evaluation.value,  # type: ignore
                 comment=evaluation.comment,
