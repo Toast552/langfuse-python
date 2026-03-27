@@ -17,7 +17,6 @@ The integration is fully interoperable with the `observe()` decorator and the lo
 See docs for more details: https://langfuse.com/docs/integrations/openai
 """
 
-import logging
 import types
 from collections import defaultdict
 from dataclasses import dataclass
@@ -33,24 +32,16 @@ from wrapt import wrap_function_wrapper
 from langfuse._client.get_client import get_client
 from langfuse._client.span import LangfuseGeneration
 from langfuse._utils import _get_timestamp
+from langfuse.logger import langfuse_logger as logger
 from langfuse.media import LangfuseMedia
 
 try:
     import openai
+    from openai import AsyncAzureOpenAI, AsyncOpenAI, AzureOpenAI, OpenAI  # noqa: F401
 except ImportError:
     raise ModuleNotFoundError(
         "Please install OpenAI to use this feature: 'pip install openai'"
     )
-
-try:
-    from openai import AsyncAzureOpenAI, AsyncOpenAI, AzureOpenAI, OpenAI  # noqa: F401
-except ImportError:
-    AsyncAzureOpenAI = None  # type: ignore
-    AsyncOpenAI = None  # type: ignore
-    AzureOpenAI = None  # type: ignore
-    OpenAI = None  # type: ignore
-
-log = logging.getLogger("langfuse")
 
 
 @dataclass
@@ -255,6 +246,34 @@ def _langfuse_wrapper(func: Any) -> Any:
     return _with_langfuse
 
 
+def _extract_responses_prompt(kwargs: Any) -> Any:
+    input_value = kwargs.get("input", None)
+    instructions = kwargs.get("instructions", None)
+
+    if isinstance(input_value, NotGiven):
+        input_value = None
+
+    if isinstance(instructions, NotGiven):
+        instructions = None
+
+    if instructions is None:
+        return input_value
+
+    if input_value is None:
+        return {"instructions": instructions}
+
+    if isinstance(input_value, str):
+        return [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": input_value},
+        ]
+
+    if isinstance(input_value, list):
+        return [{"role": "system", "content": instructions}, *input_value]
+
+    return {"instructions": instructions, "input": input_value}
+
+
 def _extract_chat_prompt(kwargs: Any) -> Any:
     """Extracts the user input from prompts. Returns an array of messages or dict with messages and functions"""
     prompt = {}
@@ -412,7 +431,7 @@ def _get_langfuse_data_from_kwargs(resource: OpenAiDefinition, kwargs: Any) -> A
     if resource.type == "completion":
         prompt = kwargs.get("prompt", None)
     elif resource.object == "Responses" or resource.object == "AsyncResponses":
-        prompt = kwargs.get("input", None)
+        prompt = _extract_responses_prompt(kwargs)
     elif resource.type == "chat":
         prompt = _extract_chat_prompt(kwargs)
     elif resource.type == "embedding":
@@ -548,8 +567,8 @@ def _parse_usage(usage: Optional[Any] = None) -> Any:
     for tokens_details in [
         "prompt_tokens_details",
         "completion_tokens_details",
-        "input_token_details",
-        "output_token_details",
+        "input_tokens_details",
+        "output_tokens_details",
     ]:
         if tokens_details in usage_dict and usage_dict[tokens_details] is not None:
             tokens_details_dict = (
@@ -591,7 +610,8 @@ def _extract_streamed_response_api_response(chunks: Any) -> Any:
     for raw_chunk in chunks:
         chunk = raw_chunk.__dict__
         if raw_response := chunk.get("response", None):
-            usage = chunk.get("usage", None)
+            usage = chunk.get("usage", None) or getattr(raw_response, "usage", None)
+
             response = raw_response.__dict__
             model = response.get("model")
 
@@ -613,7 +633,7 @@ def _extract_streamed_response_api_response(chunks: Any) -> Any:
 
 def _extract_streamed_openai_response(resource: Any, chunks: Any) -> Any:
     completion: Any = defaultdict(lambda: None) if resource.type == "chat" else ""
-    model, usage = None, None
+    model, usage, finish_reason = None, None, None
 
     for chunk in chunks:
         if _is_openai_v1():
@@ -629,6 +649,7 @@ def _extract_streamed_openai_response(resource: Any, chunks: Any) -> Any:
                 choice = choice.__dict__
             if resource.type == "chat":
                 delta = choice.get("delta", None)
+                finish_reason = choice.get("finish_reason", None)
 
                 if _is_openai_v1():
                     delta = delta.__dict__
@@ -727,7 +748,7 @@ def _extract_streamed_openai_response(resource: Any, chunks: Any) -> Any:
         model,
         get_response_for_chat() if resource.type == "chat" else completion,
         usage,
-        None,
+        {"finish_reason": finish_reason} if finish_reason is not None else None,
     )
 
 
@@ -868,7 +889,7 @@ def _wrap(
 
         return openai_response
     except Exception as ex:
-        log.warning(ex)
+        logger.warning(ex)
         model = kwargs.get("model", None) or None
         generation.update(
             status_message=str(ex),
@@ -939,7 +960,7 @@ async def _wrap_async(
 
         return openai_response
     except Exception as ex:
-        log.warning(ex)
+        logger.warning(ex)
         model = kwargs.get("model", None) or None
         generation.update(
             status_message=str(ex),
