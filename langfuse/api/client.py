@@ -23,6 +23,8 @@ if typing.TYPE_CHECKING:
         DatasetRunItemsClient,
     )
     from .datasets.client import AsyncDatasetsClient, DatasetsClient
+    from .experiments.client import AsyncExperimentsClient, ExperimentsClient
+    from .feedback.client import AsyncFeedbackClient, FeedbackClient
     from .health.client import AsyncHealthClient, HealthClient
     from .ingestion.client import AsyncIngestionClient, IngestionClient
     from .legacy.client import AsyncLegacyClient, LegacyClient
@@ -131,6 +133,8 @@ class LangfuseAPI:
         self._dataset_items: typing.Optional[DatasetItemsClient] = None
         self._dataset_run_items: typing.Optional[DatasetRunItemsClient] = None
         self._datasets: typing.Optional[DatasetsClient] = None
+        self._experiments: typing.Optional[ExperimentsClient] = None
+        self._feedback: typing.Optional[FeedbackClient] = None
         self._health: typing.Optional[HealthClient] = None
         self._ingestion: typing.Optional[IngestionClient] = None
         self._legacy: typing.Optional[LegacyClient] = None
@@ -207,6 +211,22 @@ class LangfuseAPI:
 
             self._datasets = DatasetsClient(client_wrapper=self._client_wrapper)
         return self._datasets
+
+    @property
+    def experiments(self):
+        if self._experiments is None:
+            from .experiments.client import ExperimentsClient  # noqa: E402
+
+            self._experiments = ExperimentsClient(client_wrapper=self._client_wrapper)
+        return self._experiments
+
+    @property
+    def feedback(self):
+        if self._feedback is None:
+            from .feedback.client import FeedbackClient  # noqa: E402
+
+            self._feedback = FeedbackClient(client_wrapper=self._client_wrapper)
+        return self._feedback
 
     @property
     def health(self):
@@ -465,6 +485,8 @@ class AsyncLangfuseAPI:
         self._dataset_items: typing.Optional[AsyncDatasetItemsClient] = None
         self._dataset_run_items: typing.Optional[AsyncDatasetRunItemsClient] = None
         self._datasets: typing.Optional[AsyncDatasetsClient] = None
+        self._experiments: typing.Optional[AsyncExperimentsClient] = None
+        self._feedback: typing.Optional[AsyncFeedbackClient] = None
         self._health: typing.Optional[AsyncHealthClient] = None
         self._ingestion: typing.Optional[AsyncIngestionClient] = None
         self._legacy: typing.Optional[AsyncLegacyClient] = None
@@ -543,6 +565,24 @@ class AsyncLangfuseAPI:
 
             self._datasets = AsyncDatasetsClient(client_wrapper=self._client_wrapper)
         return self._datasets
+
+    @property
+    def experiments(self):
+        if self._experiments is None:
+            from .experiments.client import AsyncExperimentsClient  # noqa: E402
+
+            self._experiments = AsyncExperimentsClient(
+                client_wrapper=self._client_wrapper
+            )
+        return self._experiments
+
+    @property
+    def feedback(self):
+        if self._feedback is None:
+            from .feedback.client import AsyncFeedbackClient  # noqa: E402
+
+            self._feedback = AsyncFeedbackClient(client_wrapper=self._client_wrapper)
+        return self._feedback
 
     @property
     def health(self):
